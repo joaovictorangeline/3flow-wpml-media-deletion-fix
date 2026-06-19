@@ -8,6 +8,12 @@ The plugin includes an admin diagnostic tool to audit and surface existing orpha
 
 ![Orphan Uploads Report](assets/orphan-uploads-report-dashboard.jpg)
 
+## Dashboard Warning
+
+The plugin throws a warning when WPML Media Translation isn't enabled in settings.
+
+![Dashboard Warning Message](assets/dashboard-warning-message.jpg)
+
 # What problem does it solve?
 WordPress mu-plugin that fixes a known WPML edge case where deleted media attachments leave orphaned physical files behind in `wp-content/uploads/`. Includes an admin diagnostic tool to audit and surface existing orphans.
 
