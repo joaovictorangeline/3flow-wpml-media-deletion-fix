@@ -73,7 +73,7 @@ function threeflow_get_orphan_uploads() {
         SELECT pm.meta_value
         FROM {$wpdb->postmeta} pm
         INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-        WHERE pm.meta_key = '_wp_attachment_metadata'
+        WHERE pm.meta_key = '_wp_attached_metadata'
         AND p.post_type = 'attachment'
         AND p.post_status = 'inherit'
         AND p.ID NOT IN (
@@ -142,6 +142,37 @@ function threeflow_get_orphan_uploads() {
     return $orphans;
 }
 
+/**
+ * Handle background AJAX deletion requests cleanly
+ * This must live at the global level to be visible to admin-ajax.php
+ */
+add_action( 'wp_ajax_threeflow_delete_orphans', function() {
+    check_ajax_referer( 'delete_orphans_action', 'security' );
+
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( [ 'message' => 'Unauthorized' ], 403 );
+    }
+
+    $uploads     = wp_upload_dir();
+    $uploads_dir = $uploads['basedir'];
+    $uploads_url = $uploads['baseurl'];
+    $orphans     = threeflow_get_orphan_uploads();
+    $deleted     = 0;
+
+    foreach ( $orphans as $orphan ) {
+        $relative = str_replace( trailingslashit( $uploads_url ), '', $orphan['guid'] );
+        $filepath  = trailingslashit( $uploads_dir ) . $relative;
+        if ( file_exists( $filepath ) && @unlink( $filepath ) ) {
+            $deleted++;
+        }
+    }
+
+    wp_send_json_success( [ 'deleted' => $deleted ] );
+} );
+
+/**
+ * Render HTML view report page on dashboard request
+ */
 add_action( 'admin_init', function () {
     if ( ! isset( $_GET['check_orphan_uploads'] ) || $_GET['check_orphan_uploads'] !== '1' ) {
         return;
@@ -151,37 +182,7 @@ add_action( 'admin_init', function () {
         wp_die( 'Unauthorized.' );
     }
 
-   // Handle delete request
-   // 1. Hook the deletion logic into WordPress AJAX
-	add_action( 'wp_ajax_threeflow_delete_orphans', function() {
-		// Check security token
-		check_ajax_referer( 'delete_orphans_action', 'security' );
-
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( [ 'message' => 'Unauthorized' ], 403 );
-		}
-
-		$uploads     = wp_upload_dir();
-		$uploads_dir = $uploads['basedir'];
-		$uploads_url = $uploads['baseurl'];
-		$orphans     = threeflow_get_orphan_uploads();
-		$deleted     = 0;
-
-		foreach ( $orphans as $orphan ) {
-			$relative = str_replace( trailingslashit( $uploads_url ), '', $orphan['guid'] );
-			$filepath  = trailingslashit( $uploads_dir ) . $relative;
-			if ( file_exists( $filepath ) && @unlink( $filepath ) ) {
-				$deleted++;
-			}
-		}
-
-		wp_send_json_success( [ 'deleted' => $deleted ] );
-	} );
-
-    // Render report
     $orphans = threeflow_get_orphan_uploads();
-
-	// 3. Output as HTML report
 	$count = count( $orphans );
 	header( 'Content-Type: text/html; charset=utf-8' );
 	?>
@@ -231,7 +232,6 @@ add_action( 'admin_init', function () {
 			.summary.ok   { background: #e6f4ea; color: #1e7e34; border: 1px solid #b7dfbf; }
 			.summary.warn { background: #fff8e1; color: #856404; border: 1px solid #ffe082; }
 
-			/* Grid header */
 			.grid-header {
 				display: grid;
 				grid-template-columns: 1fr 1fr;
@@ -256,7 +256,6 @@ add_action( 'admin_init', function () {
 				border-right: 1px solid #ddd;
 			}
 
-			/* Grid rows */
 			.grid-body {
 				border: 1px solid #ddd;
 				border-radius: 0 0 6px 6px;
@@ -377,7 +376,6 @@ add_action( 'admin_init', function () {
 			btn.textContent = 'Deleting...';
 			btn.disabled = true;
 			
-			// Create a FormData object to send a clean POST request to admin-ajax.php
 			const formData = new FormData();
 			formData.append('action', 'threeflow_delete_orphans');
 			formData.append('security', '<?php echo wp_create_nonce("delete_orphans_action"); ?>');
@@ -395,7 +393,7 @@ add_action( 'admin_init', function () {
 						document.querySelector('.summary').innerHTML = "&#10003; All orphans deleted";
 					}
 				} else {
-					throw new Error( response.data.message || 'Unknown error' );
+					throw new Error( response.data ? response.data.message : 'Unknown error' );
 				}
 			})
 			.catch( err => {
