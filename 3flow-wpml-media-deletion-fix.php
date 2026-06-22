@@ -3,7 +3,7 @@
  * Plugin Name: 3flow WPML Media Deletion Fix
  * Description: Forces WPML Media Translation on, ensures physical file deletion completes correctly, and provides an orphan uploads checker.
  * Version:     1.2.0
- * Author:      3flow | Joao Victor Angeline
+ * Author:      3flow | Joao
  */
 
 /**
@@ -151,26 +151,32 @@ add_action( 'admin_init', function () {
         wp_die( 'Unauthorized.' );
     }
 
-    // Handle delete request
-    if ( isset( $_GET['delete_orphans'] ) && $_GET['delete_orphans'] === '1' ) {
-        check_ajax_referer( 'delete_orphans' );
+   // Handle delete request
+   // 1. Hook the deletion logic into WordPress AJAX
+	add_action( 'wp_ajax_threeflow_delete_orphans', function() {
+		// Check security token
+		check_ajax_referer( 'delete_orphans_action', 'security' );
 
-        $uploads     = wp_upload_dir();
-        $uploads_dir = $uploads['basedir'];
-        $uploads_url = $uploads['baseurl'];
-        $orphans     = threeflow_get_orphan_uploads();
-        $deleted     = 0;
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( [ 'message' => 'Unauthorized' ], 403 );
+		}
 
-        foreach ( $orphans as $orphan ) {
-            $relative = str_replace( trailingslashit( $uploads_url ), '', $orphan['guid'] );
-            $filepath  = trailingslashit( $uploads_dir ) . $relative;
-            if ( file_exists( $filepath ) && @unlink( $filepath ) ) {
-                $deleted++;
-            }
-        }
+		$uploads     = wp_upload_dir();
+		$uploads_dir = $uploads['basedir'];
+		$uploads_url = $uploads['baseurl'];
+		$orphans     = threeflow_get_orphan_uploads();
+		$deleted     = 0;
 
-        wp_send_json( [ 'deleted' => $deleted ] );
-    }
+		foreach ( $orphans as $orphan ) {
+			$relative = str_replace( trailingslashit( $uploads_url ), '', $orphan['guid'] );
+			$filepath  = trailingslashit( $uploads_dir ) . $relative;
+			if ( file_exists( $filepath ) && @unlink( $filepath ) ) {
+				$deleted++;
+			}
+		}
+
+		wp_send_json_success( [ 'deleted' => $deleted ] );
+	} );
 
     // Render report
     $orphans = threeflow_get_orphan_uploads();
@@ -364,22 +370,40 @@ add_action( 'admin_init', function () {
         }
 
         function deleteFiles() {
-            if ( ! confirm( 'Are you sure you want to permanently delete all <?php echo $count; ?> orphan files from the server? This cannot be undone.' ) ) {
-                return;
-            }
-            const btn = document.getElementById('delete-btn');
-            btn.textContent = 'Deleting...';
-            btn.disabled = true;
-            fetch( '<?php echo esc_url( wp_nonce_url( admin_url() . "?check_orphan_uploads=1&delete_orphans=1", "delete_orphans" ) ); ?>' )
-            .then( r => r.json() )
-            .then( data => {
-                    btn.textContent = "&#128465; Deleted " + data.deleted + " file(s)";
-                    if ( data.deleted > 0 ) {
-                        document.querySelectorAll('.grid-row').forEach( row => row.remove() );
-                        document.querySelector('.summary').textContent = "&#10003; All orphans deleted";
-                    }
-            });
-        }   
+			if ( ! confirm( 'Are you sure you want to permanently delete all <?php echo $count; ?> orphan files from the server? This cannot be undone.' ) ) {
+				return;
+			}
+			const btn = document.getElementById('delete-btn');
+			btn.textContent = 'Deleting...';
+			btn.disabled = true;
+			
+			// Create a FormData object to send a clean POST request to admin-ajax.php
+			const formData = new FormData();
+			formData.append('action', 'threeflow_delete_orphans');
+			formData.append('security', '<?php echo wp_create_nonce("delete_orphans_action"); ?>');
+
+			fetch( '<?php echo esc_url( admin_url( "admin-ajax.php" ) ); ?>', {
+				method: 'POST',
+				body: formData
+			})
+			.then( r => r.json() )
+			.then( response => {
+				if ( response.success ) {
+					btn.textContent = "🗑 Deleted " + response.data.deleted + " file(s)";
+					if ( response.data.deleted > 0 ) {
+						document.querySelectorAll('.grid-row').forEach( row => row.remove() );
+						document.querySelector('.summary').innerHTML = "&#10003; All orphans deleted";
+					}
+				} else {
+					throw new Error( response.data.message || 'Unknown error' );
+				}
+			})
+			.catch( err => {
+				console.error( err );
+				btn.textContent = 'Error occurred';
+				btn.disabled = false;
+			});
+		}
     </script>
 	</body>
 	</html>
